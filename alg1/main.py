@@ -1,15 +1,12 @@
 import numpy as np
-import timeit
-import pandas as pd
 from collections import deque, namedtuple
 from enum import Enum
-from tqdm import tqdm, trange
 
 RNG = np.random.default_rng()
 
 
-def make_exp(l, N):
-    return [-np.log(1 - RNG.random()) / l for _ in range(N)]
+def make_exp(l_, N):
+    return [-np.log(1 - RNG.random()) / l_ for _ in range(N)]
 
 
 EXP_L = 100
@@ -17,22 +14,7 @@ RHO = 0.75
 exp_lambda = lambda rho: EXP_L / rho
 
 N = 5000
-
-exp_lambda_2 = lambda rho, exp_l: exp_l / rho
-
-CPU_N = 100000
-
-
-def generate_length_test():
-    data = []
-    for n in trange(1000, 52000, 1000):
-        data.append({
-            "req": make_exp(EXP_L, n),
-            "srv": make_exp(exp_lambda(RHO), n),
-            "N": n
-        })
-    return data
-
+Q = 10
 
 QueueState = namedtuple('QueueState', ['req_number', 'time'])
 Request = namedtuple('Request', ['time_in', 'time_sp', 'time_out', 'time_pr'])
@@ -93,29 +75,51 @@ def process_queue(in_s, out_s, max_size=None):
     return states, processed, passed_events, denied
 
 
-d = None
+def make_experiment(datum):
+    states, processed, passed_events, denied = process_queue(
+        datum['req'], datum['srv'], datum['q'])
+    QM = np.max([state.req_number for state in states])
+    QA = 0
+    FR = 0
+    time_total = 0
+    for i in range(len(states) - 1):
+        time_delta = states[i + 1].time - states[i].time
+        time_total += time_delta
+        QA += states[i].req_number * time_delta
+        if states[i].req_number > 0:
+            FR += time_delta
 
+    QA = QA / time_total
+    FR = FR / time_total
+    QZ = len([req for req in processed if req.time_in == req.time_sp])
+    QD = len(denied) / (len(processed) + len(denied))
+    QT = np.mean([req.time_sp - req.time_in for req in processed])
+    QX = np.mean([
+        req.time_sp - req.time_in for req in processed
+        if req.time_sp != req.time_in
+    ])
+    FT = np.mean([req.time_out - req.time_sp for req in processed])
 
-def test_length(l_data):
-    results = []
-    for datum in tqdm(l_data):
-        states, processed, passed_events, denied = process_queue(
-            datum['req'], datum['srv'])
-        time_total = 0
-        QA = 0
-        for i in range(len(states) - 1):
-            time_delta = states[i + 1].time - states[i].time
-            time_total += time_delta
-            QA += states[i].req_number * time_delta
-        QA /= time_total
-        QT = np.mean([req.time_sp - req.time_in for req in processed])
-        results.append({"N": datum["N"], "QA": QA, "QT": QT})
-
-    df = pd.DataFrame(results)
-    return df
+    return {
+        "QM": QM,
+        "QA": QA,
+        "QZ": QZ,
+        "QD": QD,
+        "QT": QT,
+        "QX": QX
+    }, {
+        "FR": FR,
+        "FT": FT
+    }
 
 
 if __name__ == '__main__':
-    l_data = generate_length_test()
-    df_l = test_length(l_data)
-    df_l.to_csv('stats_pavel.csv', index=False)
+    req = make_exp(EXP_L, N)
+    srv = make_exp(exp_lambda(RHO), N)
+    datum = {
+        "req": req,
+        "srv": srv,
+        "q": Q
+    }
+    result = make_experiment(datum)
+    print(result)
